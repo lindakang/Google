@@ -1,0 +1,406 @@
+---
+title: "Google Case Study 2"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+---
+
+# How Can a Wellness Technology Company Play It Smart?
+
+## Background
+Urška Sršen, cofounder and Chief Creative Officer of [Bellabeat](https://bellabeat.com/), believes that analyzing smart device fitness data could help unlock new growth opportunities for the company. You have been asked to focus on one of Bellabeat’s products and analyze smart device data to gain insight into how consumers are using their smart devices. The insights you discover will then help guide the marketing strategy for the company.
+
+Sršen asks you to analyze smart device usage data in order to gain insight into how consumers use non-Bellabeat smart devices. She then wants you to select one Bellabeat product to apply these insights to in your presentation.
+
+## Questions for analysis:
+* What are some trends in smart device usage?
+* How could these trends apply to Bellabeat customers?
+* How could these trends help influence Bellabeat marketing strategy?
+
+## Deliverables:
+* Clear summary of the business task
+* Description of all data sources used
+* Documentation of any cleaning or manipulation of data
+* Summary of your analysis
+* Supporting visualizations and key findings
+* Your top high-level content recommendations based on your analysis
+
+## 1. Ask
+<b>Business task</b>: Gain insights into how consumers use non-Bellabeat smart devices and how they can be applied to one of the company's products. The insight will be used for providing guidance on marketing strategy.
+
+<b>Stakeholders</b>: Urška Sršen (cofounder, CEO), Sando Mur (co-founder, mathematician), Bellabeat marketing analytics team
+
+## 2. Prepare
+<b>Data source</b>: [FitBit Fitness Tracker Data](https://www.kaggle.com/arashnic/fitbit) (CC0: Public Domain, dataset made available through Mobius) stored on Kaggle. The data set contains personal fitness trackers from 30 Fitbit users who have consented to the submission of personal tracker data, including minute-level output for physical activity, heart rate, and sleep monitoring. It includes information about daily activity, steps, and heart rate that can be used to explore users’ habits.
+
+<b>Data information</b>: There are 18 files on Kaggle that can be divided into the following categories: Activity, calorie, Intensity, Steps, and Sleep. Some of which have daily, hourly and minute data.
+
+Download data from Kaggle, then glimpse the file with SQL and RStudio.
+Note that “dailyActivity_merged” contains data of “dailyIntensities_merged”, “dailySteps_merged” and "dailyCalories_merged" from 2016-04-12 to 2016-05-12.
+
+Bellabeat’s tracker Leaf tracks activity, sleep and stress; therefore, after glimping the data, I decided to use the following files for analysis:
+* dailyActivity_merged.csv - 33 distinct user ID, 31 days, 15 variables,
+* sleepDay_merged.csv - 24 distinct user ID, 5 variables: Id, SleepDay, TotalSleepRecords, TotalMinutesAsleep, TotalTimeInBed
+* hourlyIntensities_merged.csv - 33 distinct user ID, 4 variables: Id, ActivityHour, TotalIntensity, AverageIntensity
+* hourlySteps_merged.csv - 33 distinct user ID, 3 variables: Id, ActivityHour, TotalSteps
+
+### 2-1. Load packages
+
+Load the packages needed for data processing and analysis.
+
+```{r}
+library(tidyr)
+library(tidyverse)
+library(tibble)
+library(dbplyr)
+library(utils)
+library(lubridate)
+```
+
+### 2-2. Import files
+
+Import the 4 files that will be used for analysis.
+
+```{r}
+daily_activity <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/dailyActivity_merged.csv")
+daily_calories <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/dailyCalories_merged.csv")
+daily_intensity <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/dailyIntensities_merged.csv")
+hourly_intensity <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/hourlyIntensities_merged.csv")
+daily_steps <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/dailySteps_merged.csv")
+hourly_steps <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/hourlySteps_merged.csv")
+sleep_day <- read_csv("/Users/Linda/Desktop/RStudio/Google Data/CaseStudy/sleepDay_merged.csv")
+
+```
+
+## 3. Process
+
+At the process stage, I will do:
+
+1. Check for duplicates & missing values (NA)
+2. Formate data for consistency
+3. Merge data:<br>
+    a) Create dataset, daily_all = “dailyActivity_merged” with “sleepDay_merged” and merge<br>
+    b) Create dataset, hourly_all = “hourlyIntensities_merged” with “hourlySteps_merged”
+
+
+### 3-1. Check duplicates & missing values (NA)
+
+Check if there're any duplicates in the data.
+
+```{r}
+# check duplicates
+sum(duplicated(daily_activity))  # 0 duplicate
+sum(duplicated(sleep_day))  # 3 duplicates
+sum(duplicated(hourly_intensity))  # 0 duplicate
+sum(duplicated(hourly_steps))  # 0 duplicate
+```
+
+There are 3 duplicates in the sleep_day, so we want to remove them.
+
+```{r}
+# remove duplicates
+sleep_day <- distinct(sleep_day)
+sum(duplicated(sleep_day))  # 3 duplicates
+
+```
+
+Next, we want to check for missing values.
+
+```{r}
+# check NA
+sum(is.na(daily_activity)) # 0 NAs
+sum(is.na(sleep_day)) # 0 NAs
+sum(is.na(hourly_intensity))  # 0 NAs
+sum(is.na(hourly_steps)) # 0 NAs
+```
+
+No missing values observed.
+
+### 3-2. Format data for consistency
+
+Next, we want to change date and time format so we can merge the data.
+
+For the data 'sleep_day', we want to remove time part (12:00:00 AM) from the 'ActivityDate' column.
+
+```{r}
+# Remove time from "SleepDay" and assign as ActivityDate
+sleep_day <- sleep_day %>%
+  mutate("ActivityDate" = str_remove(SleepDay, " 12:00:00 AM")) %>%
+  select(-SleepDay)
+```
+
+The, we change the date format.
+
+```{r}
+sleep_day$ActivityDate <- as.Date(sleep_day$ActivityDate, format = "%m/%d/%Y")
+
+daily_activity$ActivityDate <- as_date(daily_activity$ActivityDate, format = "%m/%d/%Y")
+
+# Take a glimpse of the data
+head(daily_activity)
+
+```
+
+
+Add a column for week days so that we can observe users' activities of each weekday.
+
+```{r}
+# Add a "Weekday" column
+daily_activity <- daily_activity %>%
+  mutate(Weekday = weekdays(ActivityDate))
+```
+
+### 3-3. Merge datasets
+
+I want to merge daily activity (daily_activity) and daily sleep (sleep_day) data so that it contains all daily data I want to analyse. I also want to merge hourly step data (hourly_steps) and hourly intensity data (hourly_intensity) so all the hourly data are in one dataset.
+
+After merged, we want to order weekdays from Monday to Sundy, otherise it will be in alphabetical order.
+
+```{r}
+# Join daily_activity & sleep_day
+daily_all <- merge(daily_activity, sleep_day, by = c("Id", "ActivityDate"), all = TRUE)
+
+hourly_all <- merge(hourly_intensity, hourly_steps, by = c("Id", "ActivityHour"), all = TRUE)
+
+# Sort the weekdays in order
+daily_all$Weekday <-ordered(daily_all$Weekday,
+                            levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+```
+
+Transform date and separate time in the hourly data into "date" and "time" so that we can determine activities at each time point.
+
+```{r}
+# Transform ActivityHour to date format & separate to Date & Time
+hourly_all$ActivityHour = as.POSIXct(hourly_all$ActivityHour, format="%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone())
+
+hourly_all <- hourly_all %>%
+  separate(ActivityHour, into = c("date", "time"), sep= " ")
+```
+
+Transform "Id" (class double) to factor and check its levels to confirm.
+
+```{r}
+# Transform Id to factor
+daily_activity$Id <- factor(daily_activity$Id)
+sleep_day$Id <- factor(sleep_day$Id)
+hourly_all$Id <- factor(hourly_all$Id)
+```
+
+Take a glimpse at daily activity.
+
+```{r}
+head(daily_all)
+```
+
+Take a glimpse at hourly activity.
+
+```{r}
+head(hourly_all)
+```
+
+## 4. Analysis
+We hope to answer:
+
+1. When is the most active time of the day and of the week?
+2. How do users spend their time during their active (awake) time?
+3. What are users averge steps and calories burned?
+4. How long do people stay in bed and asleep?
+
+
+### 4-1. Most acitve time of the day is around 5-7 pm
+
+We want to determine the average steps and average intensity of each time point of the day.
+
+```{r}
+
+# Most active time of the day
+avg_hourly_activity <- hourly_all %>%
+  select(Id, time, TotalIntensity, StepTotal) %>%
+  group_by(time) %>%
+  summarise(total_step_mean = mean(StepTotal),
+            total_intensity_mean = mean(TotalIntensity))
+
+ggplot(avg_hourly_activity, aes(x = time, y = total_step_mean, fill = total_intensity_mean)) +
+  geom_col()+
+  scale_fill_gradient(low = "light blue", high = "dark blue") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = 'Time of the day',
+       y = 'Average Steps',
+       title = 'Average Activity of the Day',
+       fill = 'Average\nIntensity')
+```
+
+We can see that 17:00 to 19:00 are the most active time of the day, in terms of both intensity and steps. Around 550 to 600 step per 30 mins during that time.
+
+### 4-2. Users are sedentary during most of their active time
+
+Next, we want to know how users spend their time when they are awake; that is, how active are the users during their active (awake) time, including sedentary time.
+
+Here, we calculate % of each level of activities in their total active time.
+
+```{r}
+# Most active day of the week
+avg_daily_activity <- daily_all %>%
+  mutate(total_activity = VeryActiveMinutes + FairlyActiveMinutes + LightlyActiveMinutes + SedentaryMinutes,
+        pct_very_active = VeryActiveMinutes / total_activity * 100,
+        pct_fairly_active = FairlyActiveMinutes / total_activity * 100,
+        pct_lightly_active = LightlyActiveMinutes / total_activity * 100,
+        pct_sedentary = SedentaryMinutes / total_activity * 100) %>%
+  group_by(Weekday) %>%
+  summarise(pct_very_active_mean = mean(pct_very_active),
+            pct_fairly_active_mean = mean(pct_fairly_active),
+            pct_lightly_active_mean = mean(pct_lightly_active),
+            pct_sedentary_mean = mean(pct_sedentary),
+            total_step_mean = mean(TotalSteps),
+            total_dist_mean = mean(TotalDistance),
+            very_active_mean = mean(VeryActiveMinutes),
+            lightly_active_mean = mean(LightlyActiveMinutes),
+            activity_mean = mean(total_activity - SedentaryMinutes),
+            calories_mean = mean(Calories))
+
+# Transform data to long form
+activity <- avg_daily_activity %>%
+  select(Weekday, pct_very_active_mean, pct_fairly_active_mean, pct_lightly_active_mean, pct_sedentary_mean) %>%
+  pivot_longer(c("pct_very_active_mean", "pct_fairly_active_mean", "pct_lightly_active_mean", "pct_sedentary_mean"),
+               names_to = 'activity_level', values_to = 'percent_activity')
+
+ggplot(activity, 
+       aes(x = Weekday, y = percent_activity, fill = activity_level)) +
+  geom_bar(position = "fill",stat = "identity") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_brewer(palette = "Paired",
+                    labels = c('Fairly active', 'Lightly active', 'Sedentary', 'Very Active')) +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  labs(title = 'Daily Activity',
+       x = 'Day of the Week',
+       y = 'Activity Level (% of total activity)',
+       fill = 'Activity Level')
+```
+
+We can see that around 80% of their time are sedentary, doesn't matter which day of the week. Around 15% to 19% of the time are fairly active.
+
+### 4-3. Average steps & calories burned
+
+Next, we want to see if users reach their daily steps and calories burned.
+
+According to CDC, average American takes 3,000 to 4,000 steps per day and they recommend 10,000 per day for general health. And thus, many pedometers track to see if users reach 10,000 steps per day.
+
+Medical News Today: [How many steps should people take per day?](https://www.medicalnewstoday.com/articles/how-many-steps-should-you-take-a-day)
+
+Mayo Clinics: [10,000 steps a day: Too low? Too high?](https://www.mayoclinic.org/healthy-lifestyle/fitness/in-depth/10000-steps/art-20317391)
+
+Studies consider 10,000 steps per day active and is a good baseline. Let's look at how many steps the users have and if they reach 10,000 steps per day.
+
+Reference: [How Many Steps Should You Aim for Each Day?](https://www.verywellfit.com/how-many-steps-per-day-are-enough-3432827)
+
+```{r}
+# Steps vs. Very Active minutes
+ggplot(avg_daily_activity, aes(x = Weekday, y = total_step_mean, fill = very_active_mean)) +
+  geom_col()+
+  scale_fill_gradient(low = "light blue", high = "dark blue") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = 'Day of the week',
+       y = 'Average Total Steps',
+       title = 'Average Total Steps vs. Very Active Minutes',
+       fill = 'Very Active Minutes')
+```
+
+Thses Fitnit users have higher daily steps than genernal Americans but still lower than the recommended 10,000 steps and less than 30 minutes per day. They may need to increase additional 30 min of activities to reach the goal.
+
+Next, we look at daily calories burned. Adults typically burn about 2,000 to 2,500 calories per days. If we want to maintain current weight, number of calories consumed need to be the same as we burn each day. If we want to lose weight, then we need to burn more calories than we consumed.
+
+Reference: [How Many Calories Should I Burn in a Day?](https://www.nike.com/a/how-many-calories-should-you-burn-daily)
+
+```{r}
+# Calories vs. Steps
+ggplot(avg_daily_activity, aes(x = Weekday, y = calories_mean, fill = total_step_mean)) +
+  geom_col()+
+  scale_fill_gradient(low = "light blue", high = "dark blue") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = 'Day of the week',
+       y = 'Average Calories Burned',
+       title = 'Weekly Average Calories Burn vs. Steps',
+       fill = 'Average Steps')
+```
+
+We can see that daily calories burned are around 2000 to 2500 calories with 7,000 to 8,200 steps per day, which means that users can only intake this much calories to maintain their weight. This may be difficult with American style food.
+
+### 4-4. Sleep Qaultiy
+
+How about their sleep? We want to know how long do they spend time in bed and how long they actually asleep during their time in bed.
+
+```{r}
+sleep_time <- daily_all %>%
+  drop_na() %>%
+  mutate(time_in_bed = TotalTimeInBed / 60,
+         time_asleep = TotalMinutesAsleep / 60,
+         percent_asleep = TotalMinutesAsleep / TotalTimeInBed * 100) %>%
+  select(Id, ActivityDate, Weekday, time_in_bed, time_asleep, percent_asleep)
+
+avg_sleep_time <- sleep_time %>%
+  group_by(Weekday) %>%
+  summarise(avg_total_in_bed = mean(time_in_bed),
+            avg_total_asleep = mean(time_asleep),
+            avg_per_asleep = mean(percent_asleep))
+
+ggplot(avg_sleep_time, aes(x = Weekday, y = avg_total_in_bed, fill = avg_per_asleep)) +
+  geom_col()+
+  scale_fill_gradient(low = "skyblue", high = "navy blue") +
+  theme(axis.text.x = element_text(angle =90)) +
+  labs(title = 'Sleep Quality',
+       x = 'Day of the Week',
+       y = 'Time in bed (hours)',
+       fill = 'Time Asleep (%)')
+```
+
+Their time in bed is arond 7 - 8 hours. Although their sleep quality seems not too bad (e.g., >90% of their time in bed are asleep), it's still less than 8 hours per day.
+
+
+## Summary
+
+From the above data, we know that:
+
+1. Users likely workout between 5 - 7 pm each day
+2. During the weekdays, 80% of the time, users are sedentary.
+3. Averge steps are around 7000 to 82000 steps daily, which are less than the recommended 10,000 steps; active time is also less than the recommended 30 minutes.
+4. Calories burned are around 2000 to 2500 each day.
+5. Users generally sleep less than 8 hour per day.
+
+## Business Suggestions
+
+Based on users life styles, we can try incorporating following features in our Leaf tracker:
+
+1. <b>Step goal reminder</b>: based on hourly steps data, average maximum steps per 30 minuntes; their average steps per day are around 7,200 to 8,000 steps per day. This means that they may need additional 30 to 60 miuntes per day to reach recommended 10,000 steps. We can incorporate a function that users can set their own step goals and reminder to improve their daily activity gradually.
+
+2. <b>Active time</b>: users' active time are less than 30 minutes in general. It is recommended to have >30 minutes of active activities for 3+ days per week. A feature can be added for users to choose which 3 days and set reminders for that.
+
+3. <b>Sedentary time</b>: from the data, we can observe that 80% of the time are sedentary. We can incorporate a function that users can set an alarm when users stay sedentary for more than 1 hour or for the time they preferred. The alarm can remind them to move and do some stretch when they sit too long.
+
+4. <b>Calories calculator</b>: we can add a feature for users to recorded their daily calories consumption and a calories calculator so that they know if net calories is 0 and if they burn more calories than they consume when they want to lose weight.
+
+5. <b>Sleep reminder</b>: users' sleep time are less than 8 hours per day. A function can be added to remind user time to sleep.</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+Author: Linda Kang</br>
+</br>
+Note: This is the Capstone project of Google Data Analytics certificate
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
